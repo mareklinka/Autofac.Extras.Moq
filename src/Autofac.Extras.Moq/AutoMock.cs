@@ -28,6 +28,7 @@ using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using Autofac.Builder;
 using Autofac.Core;
+using Autofac.Core.Activators.Reflection;
 using Autofac.Features.ResolveAnything;
 using Moq;
 
@@ -42,17 +43,27 @@ namespace Autofac.Extras.Moq
 
         private readonly List<Type> _createdServiceTypes = new List<Type>();
 
-        private AutoMock(MockBehavior behavior)
-            : this(new MockRepository(behavior))
+        private readonly IConstructorFinder _constructorFinder;
+
+        private AutoMock(MockBehavior behavior, IConstructorFinder finder)
+            : this(new MockRepository(behavior), finder)
         {
         }
 
-        private AutoMock(MockRepository repository)
+        private AutoMock(MockRepository repository, IConstructorFinder finder)
         {
             this.MockRepository = repository;
             var builder = new ContainerBuilder();
             builder.RegisterInstance(this.MockRepository);
-            builder.RegisterSource(new AnyConcreteTypeNotAlreadyRegisteredSource());
+
+            AnyConcreteTypeNotAlreadyRegisteredSource actnars = new AnyConcreteTypeNotAlreadyRegisteredSource();
+            if (finder != null)
+            {
+                _constructorFinder = finder;
+                actnars.RegistrationConfiguration = b => b.FindConstructorsWith(finder);
+            }
+
+            builder.RegisterSource(actnars);
             builder.RegisterSource(new MoqRegistrationHandler(_createdServiceTypes));
             this.Container = builder.Build();
             this.VerifyAll = false;
@@ -89,34 +100,37 @@ namespace Autofac.Extras.Moq
         /// Create new <see cref="AutoMock"/> instance that will create mocks with behavior defined by a repository.
         /// </summary>
         /// <param name="repository">The repository that defines the behavior. </param>
+        /// <param name="finder">the constructor finder.</param>
         /// <returns>
         /// An <see cref="AutoMock"/> based on the provided <see cref="MockRepository"/>.
         /// </returns>
-        public static AutoMock GetFromRepository(MockRepository repository)
+        public static AutoMock GetFromRepository(MockRepository repository, IConstructorFinder finder = null)
         {
-            return new AutoMock(repository);
+            return new AutoMock(repository, finder);
         }
 
         /// <summary>
         /// Create new <see cref="AutoMock"/> instance with loose mock behavior.
         /// </summary>
+        /// <param name="finder">the constructor finder.</param>
         /// <returns>Container initialized for loose behavior.</returns>
         /// <seealso cref="MockRepository"/>
         [SuppressMessage("Microsoft.Design", "CA1024:UsePropertiesWhereAppropriate")]
-        public static AutoMock GetLoose()
+        public static AutoMock GetLoose(IConstructorFinder finder = null)
         {
-            return new AutoMock(MockBehavior.Loose);
+            return new AutoMock(MockBehavior.Loose, finder);
         }
 
         /// <summary>
         /// Create new <see cref="AutoMock"/> instance with strict mock behavior.
         /// </summary>
+        /// <param name="finder">the constructor finder.</param>
         /// <seealso cref="MockRepository"/>
         /// <returns>Container initialized for loose behavior.</returns>
         [SuppressMessage("Microsoft.Design", "CA1024:UsePropertiesWhereAppropriate")]
-        public static AutoMock GetStrict()
+        public static AutoMock GetStrict(IConstructorFinder finder = null)
         {
-            return new AutoMock(MockBehavior.Strict);
+            return new AutoMock(MockBehavior.Strict, finder);
         }
 
         /// <summary>
@@ -162,8 +176,14 @@ namespace Autofac.Extras.Moq
         [SuppressMessage("Microsoft.Reliability", "CA2000:Dispose objects before losing scope", Justification = "The component registry is responsible for registration disposal.")]
         public TService Provide<TService, TImplementation>(params Parameter[] parameters)
         {
-            this.Container.ComponentRegistry.Register(
-                            RegistrationBuilder.ForType<TImplementation>().As<TService>().InstancePerLifetimeScope().CreateRegistration());
+            var registrationBuilder = RegistrationBuilder.ForType<TImplementation>().As<TService>().InstancePerLifetimeScope();
+
+            if (_constructorFinder != null)
+            {
+                registrationBuilder = registrationBuilder.FindConstructorsWith(_constructorFinder);
+            }
+
+            this.Container.ComponentRegistry.Register(registrationBuilder.CreateRegistration());
 
             return this.Container.Resolve<TService>(parameters);
         }

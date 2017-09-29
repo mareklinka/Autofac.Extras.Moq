@@ -1,3 +1,8 @@
+using System;
+using System.Linq;
+using System.Reflection;
+using Autofac.Core;
+using Autofac.Core.Activators.Reflection;
 using Moq;
 using Xunit;
 
@@ -171,6 +176,49 @@ namespace Autofac.Extras.Moq.Test
                 });
         }
 
+        [Fact]
+        public void DefaultConstructorFinderForProtectedConstructorCreateThrows()
+        {
+            Assert.Throws<DependencyResolutionException>(() =>
+                   {
+                       using (var mock = AutoMock.GetLoose())
+                       {
+                           var component = mock.Create<ClassB>();
+                       }
+                   });
+        }
+
+        [Fact]
+        public void DefaultConstructorFinderForProtectedConstructorProvideThrows()
+        {
+            Assert.Throws<DependencyResolutionException>(() =>
+                   {
+                       using (var mock = AutoMock.GetLoose())
+                       {
+                           mock.Provide<ClassB, ClassB>();
+                       }
+                   });
+        }
+
+        [Fact]
+        public void CustomConstructorFinderForProtectedConstructorCreateWorks()
+        {
+            using (var mock = AutoMock.GetLoose(new BindingFlagsConstructorFinder(BindingFlags.NonPublic)))
+            {
+                var component = mock.Create<ClassB>();
+                Assert.NotNull(component);
+            }
+        }
+
+        [Fact]
+        public void CustomConstructorFinderForProtectedConstructorProvideWorks()
+        {
+            using (var mock = AutoMock.GetLoose(new BindingFlagsConstructorFinder(BindingFlags.NonPublic)))
+            {
+                 mock.Provide<ClassB, ClassB>();
+            }
+        }
+
         private static void AssertProperties(AutoMock mock)
         {
             Assert.NotNull(mock.Container);
@@ -222,6 +270,20 @@ namespace Autofac.Extras.Moq.Test
         // ReSharper disable once ClassNeverInstantiated.Global
         public class ClassA : AbstractClassA
         {
+        }
+
+        public class ClassB
+        {
+            protected ClassB()
+            {
+            }
+        }
+
+        public class ClassC
+        {
+            public ClassC(ClassB b)
+            {
+            }
         }
 
         // ReSharper disable once ClassNeverInstantiated.Global
@@ -276,6 +338,25 @@ namespace Autofac.Extras.Moq.Test
             }
 
             public ClassA InstanceOfClassA { get; }
+        }
+
+        public class BindingFlagsConstructorFinder : IConstructorFinder
+        {
+            private readonly BindingFlags _bindingFlags;
+
+            public BindingFlagsConstructorFinder(BindingFlags bindingFlags)
+            {
+                _bindingFlags = bindingFlags;
+            }
+
+            public ConstructorInfo[] FindConstructors(Type targetType)
+            {
+                return targetType.FindMembers(
+                                MemberTypes.Constructor,
+                                BindingFlags.Instance | _bindingFlags,
+                                null,
+                                null).Cast<ConstructorInfo>().ToArray();
+            }
         }
     }
 }
